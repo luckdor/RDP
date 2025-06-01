@@ -26,22 +26,26 @@ jobs:
 
     - name: 启动隧道
       run: |
-        # 启动隧道（明确指定 RDP 端口和 Token）
-        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --no-autoupdate run --url rdp://localhost:3389 --token ${{ secrets.CLOUDFLARE_TOKEN }}" -RedirectStandardOutput tunnel.log
+        # 终止旧进程
+        Stop-Process -Name "cloudflared" -Force -ErrorAction SilentlyContinue
     
-        # 等待隧道初始化
-        Start-Sleep -Seconds 30  # 延长等待时间
+        # 启动隧道（指定香港区域）
+        $tunnelArgs = "tunnel --region hk --loglevel debug --no-autoupdate run --url rdp://localhost:3389 --token ${{ secrets.CLOUDFLARE_TOKEN }}"
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList $tunnelArgs -RedirectStandardOutput tunnel.log -RedirectStandardError tunnel-error.log
     
-        # 从日志提取地址（检查最后 20 行）
-        $logContent = Get-Content tunnel.log -Tail 20
-         if ($logContent -match "https://(.+\.trycloudflare\.com)") {
-        $rdpUrl = $matches[1]
-        Write-Host "✅ RDP地址: $rdpUrl"
-        echo "RDP_URL=$rdpUrl" >> $env:GITHUB_ENV
+        # 等待 2 分钟
+        Start-Sleep -Seconds 120
+    
+        # 分析日志
+        $logContent = Get-Content tunnel.log -Tail 100
+        if ($logContent -match "https://(.+\.trycloudflare\.com)") {
+            Write-Host "✅ RDP地址: $matches[1]"
+            echo "RDP_URL=$matches[1]" >> $env:GITHUB_ENV
         } else {
-        Write-Host "::error::隧道启动失败，完整日志："
-        Get-Content tunnel.log
-        exit 1
+            Write-Host "::error::隧道启动失败，完整日志："
+            Get-Content tunnel.log
+            Get-Content tunnel-error.log
+            exit 1
         }
     - name: 显示连接信息
       run: |
