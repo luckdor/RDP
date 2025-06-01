@@ -1,35 +1,58 @@
-name: Free RDP via Cloudflare Tunnel
+name: Free RDP via Cloudflare (No Domain)
 
 on:
-  workflow_dispatch:  # 手动触发
-  push:               # 推送代码时触发（可选）
+  workflow_dispatch: # 手动触发
 
 jobs:
   rdp-tunnel:
     runs-on: windows-latest
-    timeout-minutes: 360  # 免费账户最长6小时
+    timeout-minutes: 360 # 最长6小时
 
     steps:
-    - name: 启用远程桌面
+    - name: 设置远程桌面
       run: |
+        # 启用RDP服务
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-
-    - name: 设置管理员账户
-      run: |
+        
+        # 创建临时用户
         $Password = ConvertTo-SecureString -AsPlainText "${{ secrets.RDP_PASSWORD }}" -Force
-        Set-LocalUser -Name "runneradmin" -Password $Password -PasswordNeverExpires $true
+        New-LocalUser -Name "githubuser" -Password $Password -PasswordNeverExpires $true
+        Add-LocalGroupMember -Group "Administrators" -Member "githubuser"
 
-    - name: 下载 Cloudflared
+    - name: 下载Cloudflared
       run: |
         Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-    - name: 启动 Cloudflare 隧道
-      run: .\cloudflared.exe tunnel --no-autoupdate run --token $Env:CLOUDFLARE_TOKEN
-      env:
-        CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}  # 使用复制的隧道令牌
+    - name: 启动隧道
+      run: |
+        # 启动隧道（后台运行）
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --no-autoupdate run --token $Env:CLOUDFLARE_TOKEN" -RedirectStandardOutput tunnel.log
+        
+        # 等待隧道初始化
+        Start-Sleep -Seconds 15
+        
+        # 从日志提取共享地址
+        $logContent = Get-Content tunnel.log
+        if ($logContent -match "https://(.+\.trycloudflare\.com)") {
+            $rdpUrl = $matches[1]
+            Write-Host "✅ RDP地址: $rdpUrl"
+            echo "RDP_URL=$rdpUrl" >> $env:GITHUB_ENV
+        } else {
+            Write-Host "::error::未能提取隧道地址"
+            Get-Content tunnel.log
+            exit 1
+        }
 
-    # 保持隧道持续运行（防止步骤退出）
+    - name: 显示连接信息
+      run: |
+        Write-Host "========================================"
+        Write-Host "🖥️ 使用以下信息连接远程桌面:"
+        Write-Host "地址: $env:RDP_URL"
+        Write-Host "用户名: githubuser"
+        Write-Host "密码: ${{ secrets.RDP_PASSWORD }}"
+        Write-Host "========================================"
+        Write-Host "注意：此地址会在工作流结束后失效"
+        
     - name: 保持连接
       run: while ($true) { Start-Sleep -Seconds 300 }
