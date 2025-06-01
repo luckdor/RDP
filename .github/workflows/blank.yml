@@ -17,7 +17,7 @@ jobs:
         
         # 创建临时用户
         $Password = ConvertTo-SecureString -AsPlainText "${{ secrets.RDP_PASSWORD }}" -Force
-        New-LocalUser -Name "githubuser" -Password $Password -PasswordNeverExpires $true
+        New-LocalUser -Name "githubuser" -Password $Password -PasswordNeverExpires
         Add-LocalGroupMember -Group "Administrators" -Member "githubuser"
 
     - name: 下载Cloudflared
