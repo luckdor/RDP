@@ -1,21 +1,17 @@
-name: Free RDP via Cloudflare (No Domain)
+name: RDP via Cloudflare
 
-on:
-  workflow_dispatch: # 手动触发
+on: workflow_dispatch
 
 jobs:
   rdp-tunnel:
     runs-on: windows-latest
-    timeout-minutes: 360 # 最长6小时
+    timeout-minutes: 360
 
     steps:
-    - name: 设置远程桌面
+    - name: 设置RDP
       run: |
-        # 启用RDP服务
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        
-        # 创建临时用户
         $Password = ConvertTo-SecureString -AsPlainText "${{ secrets.RDP_PASSWORD }}" -Force
         New-LocalUser -Name "githubuser" -Password $Password -PasswordNeverExpires
         Add-LocalGroupMember -Group "Administrators" -Member "githubuser"
@@ -24,39 +20,28 @@ jobs:
       run: |
         Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-    - name: 启动隧道
+    - name: 启动隧道（最终方案）
       run: |
-        # 确保使用正确的参数格式
-        $arguments = @(
-          "tunnel",
-          "run",
-          "--no-autoupdate",
-          "--url", "rdp://localhost:3389",
-          "--token", "${{ secrets.CLOUDFLARE_TOKEN }}"
-        )
-    
-        # 直接运行
-        Start-Process -Wait -NoNewWindow -FilePath ".\cloudflared.exe" `
-          -ArgumentList $arguments `
-          -RedirectStandardOutput tunnel.log `
-          -RedirectStandardError tunnel-error.log
-    
-        # 检查日志
-        $logContent = Get-Content tunnel.log -Tail 50
-        if ($logContent -notmatch "trycloudflare\.com") {
-            Write-Host "::error::隧道启动失败"
-            Get-Content tunnel-error.log
+        Stop-Process -Name "cloudflared" -Force -ErrorAction SilentlyContinue
+        $env:CLOUDFLARE_TOKEN="${{ secrets.CLOUDFLARE_TOKEN }}"
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" `
+          -ArgumentList "tunnel", "--loglevel", "debug", "run", "--url", "rdp://localhost:3389", "--token", "$env:CLOUDFLARE_TOKEN" `
+          -RedirectStandardOutput "tunnel.log" `
+          -RedirectStandardError "tunnel-error.log"
+        
+        Start-Sleep -Seconds 180
+        $logContent = Get-Content "tunnel.log" -Tail 100
+        if ($logContent -match "https://(.+\.trycloudflare\.com)") {
+            echo "RDP_URL=$($matches[1])" >> $env:GITHUB_ENV
+        } else {
+            Get-Content "tunnel-error.log"
             exit 1
         }
+
     - name: 显示连接信息
       run: |
         Write-Host "========================================"
-        Write-Host "🖥️ 使用以下信息连接远程桌面:"
-        Write-Host "地址: $env:RDP_URL"
-        Write-Host "用户名: githubuser"
-        Write-Host "密码: ${{ secrets.RDP_PASSWORD }}"
+        Write-Host "🖥️ 连接地址: $env:RDP_URL"
+        Write-Host "👤 用户名: githubuser"
+        Write-Host "🔑 密码: ${{ secrets.RDP_PASSWORD }}"
         Write-Host "========================================"
-        Write-Host "注意：此地址会在工作流结束后失效"
-        
-    - name: 保持连接
-      run: while ($true) { Start-Sleep -Seconds 300 }
