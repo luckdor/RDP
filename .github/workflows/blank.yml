@@ -22,23 +22,30 @@ jobs:
     - name: 下载ngrok
       run: |
         Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip
+        Expand-Archive ngrok.zip -DestinationPath .
 
     - name: 认证ngrok
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      run: .\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    # 关键修正：RDP使用3389端口，不是80端口
-    - name: 创建TCP隧道
-      run: .\ngrok\ngrok.exe tcp 3389 --log=stdout > ngrok.log &
-      
-    - name: 获取公共地址
+    # 修复后的隧道创建和地址获取步骤
+    - name: 创建TCP隧道并获取地址
       run: |
-        # 等待ngrok启动
-        Start-Sleep -Seconds 10
-        # 从日志中提取公共地址
-        $url = (Select-String -Path ngrok.log -Pattern "url=tcp://(.+)" | ForEach-Object { $_.Matches.Groups[1].Value })
-        Write-Host "RDP地址: $url"
-        # 将地址保存到环境变量
-        echo "RDP_ADDRESS=$url" >> $Env:GITHUB_ENV
+        # 启动ngrok并捕获输出
+        $ngrokOutput = .\ngrok.exe tcp 3389 --log=stdout | Out-String
+        
+        # 直接从输出中提取地址
+        if ($ngrokOutput -match "url=tcp://(.+?)\s") {
+            $tunnelUrl = $matches[1]
+            Write-Host "RDP地址: $tunnelUrl"
+            echo "RDP_ADDRESS=$tunnelUrl" >> $env:GITHUB_ENV
+        } else {
+            Write-Host "::error::未能从ngrok输出中提取隧道地址"
+            Write-Host "ngrok输出内容:"
+            Write-Host $ngrokOutput
+            exit 1
+        }
+        
+        # 保持隧道运行
+        while ($true) { Start-Sleep -Seconds 60 }
