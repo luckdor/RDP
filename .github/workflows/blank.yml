@@ -26,25 +26,20 @@ jobs:
 
     - name: 启动隧道
       run: |
-        # 终止旧进程
-        Stop-Process -Name "cloudflared" -Force -ErrorAction SilentlyContinue
+        # 设置 Cloudflare DNS (1.1.1.1)
+        Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses ("1.1.1.1", "2606:4700:4700::1111")
     
-        # 启动隧道（指定香港区域）
-        $tunnelArgs = "tunnel --region hk --loglevel debug --no-autoupdate run --url rdp://localhost:3389 --token ${{ secrets.CLOUDFLARE_TOKEN }}"
-        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList $tunnelArgs -RedirectStandardOutput tunnel.log -RedirectStandardError tunnel-error.log
+        # 启动隧道（移除 --region 参数，使用默认全局路由）
+        $tunnelArgs = "tunnel --loglevel debug --no-autoupdate run --url rdp://localhost:3389 --token ${{ secrets.CLOUDFLARE_TOKEN }}"
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList $tunnelArgs -RedirectStandardOutput tunnel.log
     
-        # 等待 2 分钟
-        Start-Sleep -Seconds 120
-    
-        # 分析日志
-        $logContent = Get-Content tunnel.log -Tail 100
+        # 等待并检查日志（同上）
+        Start-Sleep -Seconds 60
+        $logContent = Get-Content tunnel.log -Tail 50
         if ($logContent -match "https://(.+\.trycloudflare\.com)") {
-            Write-Host "✅ RDP地址: $matches[1]"
             echo "RDP_URL=$matches[1]" >> $env:GITHUB_ENV
         } else {
-            Write-Host "::error::隧道启动失败，完整日志："
-            Get-Content tunnel.log
-            Get-Content tunnel-error.log
+            Write-Host "::error::隧道启动失败：$logContent"
             exit 1
         }
     - name: 显示连接信息
