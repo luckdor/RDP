@@ -26,21 +26,26 @@ jobs:
 
     - name: 启动隧道
       run: |
-        # 强制终止旧进程
-        Stop-Process -Name "cloudflared" -Force -ErrorAction SilentlyContinue
+        # 确保使用正确的参数格式
+        $arguments = @(
+          "tunnel",
+          "run",
+          "--no-autoupdate",
+          "--url", "rdp://localhost:3389",
+          "--token", "${{ secrets.CLOUDFLARE_TOKEN }}"
+        )
     
-        # 使用 PowerShell Job 启动（不会被自动终止）
-        $job = Start-Job -ScriptBlock {
-            .\cloudflared.exe tunnel --no-autoupdate run --url rdp://localhost:3389 --token $using:Env:CLOUDFLARE_TOKEN *> tunnel.log
-        }
+        # 直接运行
+        Start-Process -Wait -NoNewWindow -FilePath ".\cloudflared.exe" `
+          -ArgumentList $arguments `
+          -RedirectStandardOutput tunnel.log `
+          -RedirectStandardError tunnel-error.log
     
-        # 等待并检查日志
-        Start-Sleep -Seconds 60
+        # 检查日志
         $logContent = Get-Content tunnel.log -Tail 50
-        if ($logContent -match "https://(.+\.trycloudflare\.com)") {
-            echo "RDP_URL=$matches[1]" >> $env:GITHUB_ENV
-        } else {
-            Write-Host "::error::隧道日志：$logContent"
+        if ($logContent -notmatch "trycloudflare\.com") {
+            Write-Host "::error::隧道启动失败"
+            Get-Content tunnel-error.log
             exit 1
         }
     - name: 显示连接信息
